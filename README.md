@@ -1,181 +1,271 @@
+Awesome. Here’s a revised, tighter README draft that incorporates everything we’ve nailed down so far, written as a specification narrative — still no schema.json, still human-first, and very explicit about renderer vs parser responsibilities.
+
+You can drop this in as README.md and evolve it as the format hardens.
+
+⸻
+
+
 # TNIIF  
 **TribeNet Inferred Input Format**
 
-TNIIF defines the JSON input format expected by the **Render** stage of OttoMap.
+TNIIF defines the JSON input format consumed by the **OttoMap Renderer**.
 
-It represents a *curated, inferred subset* of data extracted from a parsed TribeNet turn report.  
-TNIIF is intentionally simpler and more explicit than the raw report and is designed to be:
+It represents a curated, inferred subset of data extracted from parsed TribeNet turn reports.  
+TNIIF is the **boundary artifact** between parsing and rendering.
 
-- Stable across report variations
-- Suitable for manual inspection and editing
-- Reusable by tools other than OttoMap
-- Independent of the parsing process
+The Parser produces TNIIF.  
+The Renderer consumes TNIIF.
 
-The Render command consumes **only** TNIIF.  
-The Parser produces TNIIF.
+Users are encouraged to inspect and edit TNIIF files directly.
 
 ---
 
-## Motivation
+## Design Goals
 
-Original TribeNet turn reports are:
+TNIIF is designed to be:
 
-- Human-oriented
-- Inconsistently formatted
-- Occasionally contradictory
-- Edited by hand by the GM
-- Not designed to be machine-stable
-
-TNIIF exists to draw a hard boundary between *interpretation* and *presentation*.
-
-Once data reaches TNIIF:
-- Ambiguities have been resolved (or explicitly flagged)
-- Identifiers are normalized
-- Implicit relationships are made explicit
-- Rendering logic no longer depends on report text
+- **Explicit** — no hidden inference at render time
+- **Strict** — invalid values are rejected, not guessed
+- **Deterministic** — same inputs always produce the same map
+- **Mergeable** — many files can be rendered into one map
+- **Debuggable** — nothing is silently discarded
 
 ---
 
 ## Scope
 
-TNIIF is:
+TNIIF contains:
 
-✅ A **subset** of the full report data  
-✅ Focused on **map-relevant and render-relevant information**  
-✅ Designed for **JSON-literate users to edit by hand**  
-✅ Versioned and forward-compatible  
+- Exactly **one turn** of inferred data
+- Metadata needed for attribution, debugging, and output naming
+- Units, their movement steps, and the observations they report
 
-TNIIF is **not**:
+TNIIF does **not** contain:
 
-❌ A complete archival format for turn reports  
-❌ A lossless representation of report text  
-❌ A parser output dump  
-❌ A UI format  
+- Hexes or map geometry
+- Unit names
+- Derived locations
+- Rendering instructions
+- Worldographer-specific primitives
 
-If the Renderer needs it, it belongs here.  
-If it only exists to explain *why* something happened, it probably doesn’t.
+Hexes are constructed by the renderer.
 
 ---
 
-## Pipeline Overview
+## Terminology
 
-```text
-TribeNet Turn Report
-        │
-        ▼
-     Parser
-        │
-        ▼
-     TNIIF (JSON)  ←─── editable, reusable, tool-facing
-        │
-        ▼
-     Renderer
-        │
-        ▼
-   Map / Output Artifacts
-```
+### Clan ID vs Clan Number
 
-The Parser and Renderer are intentionally decoupled by TNIIF.
+- **Clan ID**  
+  A **4-digit string**, e.g. `"0987"`  
+  This is the canonical external identifier and is used:
+  - at the file level
+  - in filenames
+  - in UI / notes
 
-⸻
+- **Clan Number**  
+  An **integer** in the range `1..999`  
+  Used internally by tools. Never stored as a string.
 
-Design Principles
+---
 
-1. Inferred, Not Quoted
+## File-Level Metadata
 
-Values in TNIIF may be derived, inferred, or normalized.
-They are not guaranteed to appear verbatim in the source report.
+Each file contains exactly one turn and includes the following metadata:
 
-2. Explicit Over Clever
+- `game`  
+  Four-digit string identifying the TribeNet game (e.g. `"0300"`)
 
-If a relationship or value is important for rendering, it must be explicit.
-No hidden rules. No implied defaults.
+- `turn`  
+  String in the form `YYYY-MM`  
+  Identifies the turn represented by this file
 
-3. Stable Identifiers
+- `clan` (optional)  
+  Clan ID string (`"0987"`) indicating the *intended owner/perspective* of the file  
+  Files may contain units from other clans
 
-Names may change. IDs must not.
-All cross-references use stable identifiers.
+- `parser_version`  
+  Semantic Version string identifying the parser that produced this file
 
-4. Human-Editable
+- `source`  
+  Filesystem path (Windows, macOS, or Linux) to the original input  
+  Stored as raw text; HTML-escaped by the renderer when written to output notes
 
-A knowledgeable user should be able to:
-	•	Fix a typo
-	•	Resolve an ambiguity
-	•	Correct a known report error
-	•	Add missing but obvious data
+All metadata is rendered into a note on the output map.
 
-…using nothing more than a text editor.
+---
 
-5. Renderer Is Dumb (On Purpose)
+## Multi-File Rendering
 
-The Renderer:
-	•	Does not parse prose
-	•	Does not infer relationships
-	•	Does not guess
+Users are encouraged to render **multiple TNIIF files** into a single map rather than combining them into one file.
 
-If the Renderer needs logic, it belongs upstream.
+The renderer:
 
-⸻
+1. Accepts the **target player Clan ID** as an input parameter
+2. Loads all input files
+3. Sorts data by:
+   - turn
+   - trust (non-target clan first, target clan last)
+   - unit id
+   - step sequence
+4. Walks the resulting event stream to construct hexes
 
-Versioning
+The output filename uses:
+- the target player Clan ID
+- the **maximum turn** across all input files
 
-Each TNIIF document declares its schema version.
+---
 
-```json
-{
-  "tniif_version": "1.0.0",
-  ...
-}
-```
+## Units
 
-•	Minor versions may add optional fields
-	•	Major versions may remove or redefine fields
-	•	The Renderer must reject incompatible versions
+Units are identified solely by **unit id**.
 
-⸻
+### Unit ID format
 
-Error Handling & Uncertainty
+DCCC[type][sequence]
 
-Some report data is ambiguous or contradictory.
+Where:
+- `D` = single digit `0..9`
+- `CCC` = clan number, zero-padded to 3 digits
+- optional type code and sequence (e.g. `c4`)
 
-TNIIF supports this by:
-	•	Allowing null where appropriate
-	•	Allowing explicit uncertainty flags
-	•	Preferring explicit unknowns over silent guesses
+Examples:
+- `"0987"` — clan/tribe unit for clan 987
+- `"1987"` — tribe unit for clan 987
+- `"0987c4"` — 4th Courier unit for clan 987
 
-If a value is wrong, it should be obvious.
-If a value is missing, it should be intentional.
+Clan ownership is derived from the embedded clan number.
 
-⸻
+### Hidden units
 
-Reuse by Other Tools
+Units may include an optional boolean field:
 
-TNIIF is designed to be consumed by tools beyond OttoMap, such as:
-	•	Validators
-	•	Visualizers
-	•	Analytics tools
-	•	Alternate renderers
-	•	Debugging and comparison utilities
+- `hidden: true`
 
-No OttoMap-internal assumptions should leak into the format.
+When a unit is hidden:
+- the renderer suppresses **all output derived from that unit**
+  - unit icon
+  - observations
+  - notes
+- this suppression persists until a later file sets `hidden: false` for the same unit
 
-⸻
+If another (visible) unit encounters a hidden unit, that encounter **is still rendered**, because it comes from the visible unit’s data.
 
-Non-Goals
-	•	Preserving original report wording
-	•	Encoding game rules
-	•	Supporting speculative or hypothetical states
-	•	Acting as a save file
+If both units are hidden, nothing is rendered 🤪
 
-⸻
+---
 
-Status
+## Moves (Steps)
 
-This specification is evolving.
+Internally, the parser produces **steps**; users think of them as **moves**.
 
-Fields and structures will stabilize as:
-	•	Additional reports are parsed
-	•	Edge cases are encountered
-	•	Rendering requirements become clearer
+Each unit has a list of moves/steps.
 
-Breaking changes will be versioned explicitly.
+A move includes:
+- `sequence` — integer `1..n`
+- optional `direction` — one of `N, NE, SE, S, SW, NW`
+- `observations[]`
+
+Moves may exist without movement:
+- A “failed to move” report produces a step with **no direction** but with observations
+
+Moves and observations **do not carry location data**.
+
+The renderer assigns observations to hexes as it generates the map.
+
+---
+
+## Observations
+
+Observations describe what a unit learned during a step.
+
+They may include:
+
+- `terrain` — TribeNet terrain name (string)
+- `cities[]` — list of city names
+- `resources[]` — list of resource names
+- `units_encountered[]` — list of unit ids
+- `edge_features` — map of direction → list of features
+
+All values are strings suitable for rendering.
+
+### Edge Features
+
+Edge features are grouped by direction and sorted:
+
+- **Direction order:** clockwise from North  
+  `N → NE → SE → S → SW → NW`
+- **Then by feature name (lexicographic)**
+
+Each feature is one of:
+- road (e.g. `"Stone Road"`)
+- border
+- terrain
+
+Internally, the parser represents these as `map[direction][]feature`.
+
+---
+
+## Validation, Mapping, and Conflicts
+
+### TribeNet vocabularies
+
+- The parser is the **source of truth** for valid TribeNet names
+  - terrain
+  - edge features
+  - resources
+- TNIIF stores TribeNet-native terms only
+
+### Renderer mapping
+
+- Users provide mappings from:
+  - TribeNet terrain → Worldographer terrain
+  - TribeNet features → Worldographer styles/icons
+
+### Invalid values
+
+If a value is unknown or invalid:
+- it is **rejected**
+- the map state is **not modified**
+- a note is added to the hex, e.g.:
+
+>Unknown terrain: “light forest”
+>Unknown edge: “Stine Road”
+
+### Conflict resolution
+
+Anything in an observation may conflict with earlier data.
+
+Rules:
+1. Comparisons are **literal**
+2. Valid later values replace earlier values (**last write wins**)
+3. Replaced values are preserved in a **hex note** for debugging
+
+Example:
+- earlier resources: `Iron`, `Copper`
+- later resources: `Jade`
+
+Result:
+- map shows: `Jade`
+- note records: `Iron`, `Copper`
+
+Nothing is silently lost.
+
+---
+
+## Map Construction
+
+- Renderer creates an empty map of the maximum TribeNet size
+- Hexes are created as observations are applied
+- TribeNet imposes a fixed grid limit (e.g. `"ZZ 3120"`)
+
+TNIIF never contains hex definitions.
+
+---
+
+## Status
+
+This format is **actively evolving**.
+
+The README is authoritative.  
+A `schema.json` will be introduced once the field set stabilizes.
