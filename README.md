@@ -1,10 +1,3 @@
-Awesome. Here’s a revised, tighter README draft that incorporates everything we’ve nailed down so far, written as a specification narrative — still no schema.json, still human-first, and very explicit about renderer vs parser responsibilities.
-
-You can drop this in as README.md and evolve it as the format hardens.
-
-⸻
-
-
 # TNIIF  
 **TribeNet Inferred Input Format**
 
